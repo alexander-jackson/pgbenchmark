@@ -26,6 +26,26 @@ async fn execute_as_owner(pool: &PgPool, query: &str) -> Result<()> {
     Ok(())
 }
 
+async fn benchmark_query(pool: &PgPool, query: &str, parameters: &[Uuid]) -> Result<()> {
+    for parameter in parameters {
+        let mut tx = pool.begin().await?;
+        let now = Instant::now();
+
+        sqlx::query(query).bind(parameter).execute(&mut *tx).await?;
+
+        let elapsed = now.elapsed();
+        tx.rollback().await?;
+
+        println!(
+            "Parameter {}: Query took {} ms",
+            parameter,
+            elapsed.as_millis()
+        );
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
@@ -39,55 +59,18 @@ async fn main() -> Result<()> {
     let parameters = read_file_content(&args.parameters)?;
     let connection_details = read_file_content(&args.connection_details)?;
 
+    let parameters = parameters
+        .lines()
+        .filter_map(|line| Uuid::from_str(line).ok())
+        .collect::<Vec<_>>();
+
     // open a connection to the database
     let pool = PgPool::connect(&connection_details).await?;
 
-    for parameter in parameters
-        .lines()
-        .filter_map(|line| Uuid::from_str(line).ok())
-    {
-        let mut tx = pool.begin().await?;
-        let now = Instant::now();
-
-        sqlx::query(&current_query)
-            .bind(parameter)
-            .execute(&mut *tx)
-            .await?;
-
-        let elapsed = now.elapsed();
-        tx.rollback().await?;
-
-        println!(
-            "Parameter {}: Current query took {} ms",
-            parameter,
-            elapsed.as_millis()
-        );
-    }
-
+    benchmark_query(&pool, &current_query, &parameters).await?;
     execute_as_owner(&pool, &up_query).await?;
 
-    for parameter in parameters
-        .lines()
-        .filter_map(|line| Uuid::from_str(line).ok())
-    {
-        let mut tx = pool.begin().await?;
-        let now = Instant::now();
-
-        sqlx::query(&proposed_query)
-            .bind(parameter)
-            .execute(&mut *tx)
-            .await?;
-
-        let elapsed = now.elapsed();
-        tx.rollback().await?;
-
-        println!(
-            "Parameter {}: Proposed query took {} ms",
-            parameter,
-            elapsed.as_millis()
-        );
-    }
-
+    benchmark_query(&pool, &proposed_query, &parameters).await?;
     execute_as_owner(&pool, &down_query).await?;
 
     Ok(())
