@@ -3,12 +3,21 @@ use std::str::FromStr;
 use std::time::Instant;
 
 use color_eyre::eyre::{eyre, Result};
-use sqlx::PgPool;
+use serde::Deserialize;
+use sqlx::{types::Json, PgPool, Row};
 use uuid::Uuid;
 
 mod args;
 
 use crate::args::Args;
+
+#[derive(Deserialize)]
+struct QueryPlan {
+    #[serde(rename = "Planning Time")]
+    planning_time: f64,
+    #[serde(rename = "Execution Time")]
+    execution_time: f64,
+}
 
 fn read_file_content(path: &Path) -> Result<String> {
     let content = std::fs::read_to_string(path)
@@ -27,19 +36,29 @@ async fn execute_as_owner(pool: &PgPool, query: &str) -> Result<()> {
 }
 
 async fn benchmark_query(pool: &PgPool, query: &str, parameters: &[Uuid]) -> Result<()> {
+    let analyse_query = format!("EXPLAIN (ANALYZE, FORMAT JSON) {}", query);
+
     for parameter in parameters {
         let mut tx = pool.begin().await?;
         let now = Instant::now();
 
-        sqlx::query(query).bind(parameter).execute(&mut *tx).await?;
+        let result = sqlx::query(&analyse_query)
+            .bind(parameter)
+            .fetch_one(&mut *tx)
+            .await?;
+
+        let plans: Json<Vec<QueryPlan>> = result.try_get(0)?;
+        let plan = &plans[0];
 
         let elapsed = now.elapsed();
         tx.rollback().await?;
 
         println!(
-            "Parameter {}: Query took {} ms",
+            "Parameter {}: Query took {} ms, planning time: {} ms, execution time: {} ms",
             parameter,
-            elapsed.as_millis()
+            elapsed.as_millis(),
+            plan.planning_time,
+            plan.execution_time
         );
     }
 
