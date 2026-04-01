@@ -17,6 +17,15 @@ fn read_file_content(path: &Path) -> Result<String> {
     Ok(content)
 }
 
+async fn execute_as_owner(pool: &PgPool, query: &str) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+    sqlx::query("SET ROLE TO owner").execute(&mut *conn).await?;
+    sqlx::query(query).execute(&mut *conn).await?;
+    conn.close().await?;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
@@ -55,10 +64,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    let mut conn = pool.acquire().await?;
-    sqlx::query("SET ROLE TO owner").execute(&mut *conn).await?;
-    sqlx::query(&up_query).execute(&mut *conn).await?;
-    conn.close().await?;
+    execute_as_owner(&pool, &up_query).await?;
 
     for parameter in parameters
         .lines()
@@ -82,10 +88,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    let mut conn = pool.acquire().await?;
-    sqlx::query("SET ROLE TO owner").execute(&mut *conn).await?;
-    sqlx::query(&down_query).execute(&mut *conn).await?;
-    conn.close().await?;
+    execute_as_owner(&pool, &down_query).await?;
 
     Ok(())
 }
