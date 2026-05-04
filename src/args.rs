@@ -5,18 +5,27 @@ use pico_args::Arguments;
 
 #[derive(Clone, Debug)]
 pub struct Args {
+    /// Path to a file which contains the current query.
     pub current: PathBuf,
+    /// Path to a migration file that applies any required changes to the database schema for the proposed query.
     pub up: PathBuf,
+    /// Path to a file which contains the proposed query.
     pub proposed: PathBuf,
+    /// Path to a migration file that reverts the changes applied by the `up` migration.
     pub down: PathBuf,
+    /// Path to a file which contains the parameters for the queries.
     pub parameters: PathBuf,
+    /// Path to a file which contains the connection details for the database.
     pub connection_details: PathBuf,
+    /// Settings for the benchmark, such as the number of warmup runs and the number of actual runs.
     pub settings: Settings,
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct Settings {
+    /// The number of warmup runs to perform before the actual benchmark runs.
     pub warmups: usize,
+    /// The number of actual benchmark runs to perform.
     pub runs: usize,
 }
 
