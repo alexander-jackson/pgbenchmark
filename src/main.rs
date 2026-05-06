@@ -31,7 +31,15 @@ fn read_file_content(path: &Path) -> Result<String> {
 async fn execute_as_owner(pool: &PgPool, query: &str) -> Result<()> {
     let mut conn = pool.acquire().await?;
     sqlx::query("SET ROLE TO owner").execute(&mut *conn).await?;
-    sqlx::query(query).execute(&mut *conn).await?;
+
+    for statement in query.split(';') {
+        let trimmed = statement.trim();
+
+        if !trimmed.is_empty() {
+            sqlx::query(trimmed).execute(&mut *conn).await?;
+        }
+    }
+
     conn.close().await?;
 
     Ok(())
