@@ -86,7 +86,7 @@ async fn benchmark_query(
 
     for parameter in parameters {
         println!("Benchmarking parameter {}...", parameter);
-        println!("Running {} warmup runs...", settings.warmups);
+        println!("    Running {} warmup runs...", settings.warmups);
 
         for _ in (0..settings.warmups).progress() {
             run_query(pool, &analyse_query, *parameter).await?;
@@ -94,7 +94,7 @@ async fn benchmark_query(
 
         let mut outcomes = Vec::new();
 
-        println!("Running {} benchmark runs...", settings.runs);
+        println!("    Running {} benchmark runs...", settings.runs);
 
         for _ in (0..settings.runs).progress() {
             let outcome = run_query(pool, &analyse_query, *parameter).await?;
