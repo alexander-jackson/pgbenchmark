@@ -59,7 +59,7 @@ async fn run_query(pool: &PgPool, query: &str, parameter: Uuid) -> Result<Benchm
     let mut tx = pool.begin().await?;
     let now = Instant::now();
 
-    let result = sqlx::query(&query)
+    let result = sqlx::query(query)
         .bind(parameter)
         .fetch_one(&mut *tx)
         .await?;
@@ -232,12 +232,18 @@ async fn main() -> Result<()> {
 
     let avg_exec = exec_deltas.iter().sum::<f64>() / n;
     let min_exec = exec_deltas.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max_exec = exec_deltas.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let max_exec = exec_deltas
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
     let improved_exec = exec_deltas.iter().filter(|&&d| d < 0.0).count();
 
     let avg_plan = plan_deltas.iter().sum::<f64>() / n;
     let min_plan = plan_deltas.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max_plan = plan_deltas.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let max_plan = plan_deltas
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
     let improved_plan = plan_deltas.iter().filter(|&&d| d < 0.0).count();
 
     println!(
