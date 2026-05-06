@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{eyre, Result};
+use indicatif::ProgressIterator;
 use serde::Deserialize;
 use sqlx::types::Json;
 use sqlx::{PgPool, Row};
@@ -87,7 +88,7 @@ async fn benchmark_query(
         println!("Benchmarking parameter {}...", parameter);
         println!("Running {} warmup runs...", settings.warmups);
 
-        for _ in 0..settings.warmups {
+        for _ in (0..settings.warmups).progress() {
             run_query(pool, &analyse_query, *parameter).await?;
         }
 
@@ -95,7 +96,7 @@ async fn benchmark_query(
 
         println!("Running {} benchmark runs...", settings.runs);
 
-        for _ in 0..settings.runs {
+        for _ in (0..settings.runs).progress() {
             let outcome = run_query(pool, &analyse_query, *parameter).await?;
             outcomes.push(outcome);
         }
