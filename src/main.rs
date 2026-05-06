@@ -36,6 +36,7 @@ async fn execute_as_owner(pool: &PgPool, query: &str) -> Result<()> {
         let trimmed = statement.trim();
 
         if !trimmed.is_empty() {
+            println!("Executing statement as owner: {}", trimmed);
             sqlx::query(trimmed).execute(&mut *conn).await?;
         }
     }
