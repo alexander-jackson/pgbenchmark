@@ -5,9 +5,11 @@ use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{eyre, Result};
 use indicatif::ProgressIterator;
+use owo_colors::OwoColorize;
 use serde::Deserialize;
 use sqlx::types::Json;
 use sqlx::{PgPool, Row};
+use tabled::{Table, Tabled};
 use uuid::Uuid;
 
 mod args;
@@ -37,7 +39,7 @@ async fn execute_as_owner(pool: &PgPool, query: &str) -> Result<()> {
         let trimmed = statement.trim();
 
         if !trimmed.is_empty() {
-            println!("Executing statement as owner: {}", trimmed);
+            println!("  Executing: {}", trimmed);
             sqlx::query(trimmed).execute(&mut *conn).await?;
         }
     }
@@ -127,6 +129,38 @@ async fn benchmark_query(
     Ok(results)
 }
 
+fn truncate_uuid(id: &Uuid) -> String {
+    let s = id.to_string();
+    format!("{}...{}", &s[..4], &s[s.len() - 4..])
+}
+
+fn format_delta(delta: f64) -> String {
+    let s = format!("{:+.2}% {}", delta, if delta < 0.0 { "↓" } else { "↑" });
+    if delta < 0.0 {
+        s.green().to_string()
+    } else {
+        s.red().to_string()
+    }
+}
+
+#[derive(Tabled)]
+struct ResultRow {
+    #[tabled(rename = "UUID")]
+    uuid: String,
+    #[tabled(rename = "Cur exec")]
+    cur_exec: String,
+    #[tabled(rename = "Prop exec")]
+    prop_exec: String,
+    #[tabled(rename = "Δ exec")]
+    delta_exec: String,
+    #[tabled(rename = "Cur plan")]
+    cur_plan: String,
+    #[tabled(rename = "Prop plan")]
+    prop_plan: String,
+    #[tabled(rename = "Δ plan")]
+    delta_plan: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
@@ -148,56 +182,79 @@ async fn main() -> Result<()> {
     // open a connection to the database
     let pool = PgPool::connect(&connection_details).await?;
 
+    println!("== Current query ==");
     let current = benchmark_query(&pool, &current_query, &parameters, args.settings).await?;
+
+    println!("\n== Applying schema changes ==");
     execute_as_owner(&pool, &up_query).await?;
 
+    println!("\n== Proposed query ==");
     let proposed = benchmark_query(&pool, &proposed_query, &parameters, args.settings).await?;
+
+    println!("\n== Rolling back schema changes ==");
     execute_as_owner(&pool, &down_query).await?;
 
-    // compare the average execution and planning times based on percentage improvement or regression
-    let mut deltas = HashMap::new();
+    // build results table
+    let mut rows = Vec::new();
+    let mut exec_deltas: Vec<f64> = Vec::new();
+    let mut plan_deltas: Vec<f64> = Vec::new();
 
     for parameter in &parameters {
         let current_outcome = current.get(parameter).unwrap();
         let proposed_outcome = proposed.get(parameter).unwrap();
 
-        let execution_time_change = (proposed_outcome.execution_time
-            - current_outcome.execution_time)
+        let exec_delta = (proposed_outcome.execution_time - current_outcome.execution_time)
             / current_outcome.execution_time
             * 100.0;
-        let planning_time_change = (proposed_outcome.planning_time - current_outcome.planning_time)
+        let plan_delta = (proposed_outcome.planning_time - current_outcome.planning_time)
             / current_outcome.planning_time
             * 100.0;
 
-        deltas.insert(*parameter, (execution_time_change, planning_time_change));
+        exec_deltas.push(exec_delta);
+        plan_deltas.push(plan_delta);
 
-        println!(
-            "Parameter {}: current execution time: {:.2}ms, current planning time: {:.2}ms, proposed execution time: {:.2}ms, proposed planning time: {:.2}ms, execution time change: {:.2}%, planning time change: {:.2}%",
-            parameter,
-            current_outcome.execution_time,
-            current_outcome.planning_time,
-            proposed_outcome.execution_time,
-            proposed_outcome.planning_time,
-            execution_time_change,
-            planning_time_change
-        );
+        rows.push(ResultRow {
+            uuid: truncate_uuid(parameter),
+            cur_exec: format!("{:.2}ms", current_outcome.execution_time),
+            prop_exec: format!("{:.2}ms", proposed_outcome.execution_time),
+            delta_exec: format_delta(exec_delta),
+            cur_plan: format!("{:.2}ms", current_outcome.planning_time),
+            prop_plan: format!("{:.2}ms", proposed_outcome.planning_time),
+            delta_plan: format_delta(plan_delta),
+        });
     }
 
-    // summarise the results by calculating the average percentage change across all parameters
-    let average_execution_time_change = deltas
-        .values()
-        .map(|(execution_time_change, _)| *execution_time_change)
-        .sum::<f64>()
-        / (deltas.len() as f64);
-    let average_planning_time_change = deltas
-        .values()
-        .map(|(_, planning_time_change)| *planning_time_change)
-        .sum::<f64>()
-        / (deltas.len() as f64);
+    println!("\n== Results ==");
+    println!("{}", Table::new(rows));
+
+    let n = exec_deltas.len() as f64;
+    let total = exec_deltas.len();
+
+    let avg_exec = exec_deltas.iter().sum::<f64>() / n;
+    let min_exec = exec_deltas.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_exec = exec_deltas.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let improved_exec = exec_deltas.iter().filter(|&&d| d < 0.0).count();
+
+    let avg_plan = plan_deltas.iter().sum::<f64>() / n;
+    let min_plan = plan_deltas.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_plan = plan_deltas.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let improved_plan = plan_deltas.iter().filter(|&&d| d < 0.0).count();
 
     println!(
-        "Average execution time change: {:.2}%, Average planning time change: {:.2}%",
-        average_execution_time_change, average_planning_time_change
+        "Execution time:  avg {}   min {}   max {}   improved {}/{}",
+        format_delta(avg_exec),
+        format_delta(min_exec),
+        format_delta(max_exec),
+        improved_exec,
+        total,
+    );
+    println!(
+        "Planning time:   avg {}   min {}   max {}   improved {}/{}",
+        format_delta(avg_plan),
+        format_delta(min_plan),
+        format_delta(max_plan),
+        improved_plan,
+        total,
     );
 
     Ok(())
