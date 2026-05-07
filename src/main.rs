@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use indicatif::ProgressIterator;
 use owo_colors::OwoColorize;
 use serde::Deserialize;
@@ -13,8 +13,10 @@ use tabled::{Table, Tabled};
 use uuid::Uuid;
 
 mod args;
+mod statistics;
 
 use crate::args::{Args, Settings};
+use crate::statistics::{BenchmarkOutcome, summarise_outcomes};
 
 #[derive(Deserialize)]
 struct QueryPlan {
@@ -47,12 +49,6 @@ async fn execute_as_owner(pool: &PgPool, query: &str) -> Result<()> {
     conn.close().await?;
 
     Ok(())
-}
-
-struct BenchmarkOutcome {
-    elapsed: Duration,
-    planning_time: f64,
-    execution_time: f64,
 }
 
 async fn run_query(pool: &PgPool, query: &str, parameter: Uuid) -> Result<BenchmarkOutcome> {
@@ -103,27 +99,7 @@ async fn benchmark_query(
             outcomes.push(outcome);
         }
 
-        // remove the fastest and slowest runs to mitigate outliers
-        outcomes.sort_by_key(|o| o.elapsed);
-        outcomes.pop();
-        outcomes.remove(0);
-
-        // summarise the results by taking the average of the remaining runs
-        let average_elapsed =
-            outcomes.iter().map(|o| o.elapsed).sum::<Duration>() / (outcomes.len() as u32);
-        let average_planning_time =
-            outcomes.iter().map(|o| o.planning_time).sum::<f64>() / (outcomes.len() as f64);
-        let average_execution_time =
-            outcomes.iter().map(|o| o.execution_time).sum::<f64>() / (outcomes.len() as f64);
-
-        results.insert(
-            *parameter,
-            BenchmarkOutcome {
-                elapsed: average_elapsed,
-                planning_time: average_planning_time,
-                execution_time: average_execution_time,
-            },
-        );
+        results.insert(*parameter, summarise_outcomes(outcomes));
     }
 
     Ok(results)
