@@ -3,7 +3,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::time::Instant;
 
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::{eyre, Result};
 use indicatif::ProgressIterator;
 use owo_colors::OwoColorize;
 use serde::Deserialize;
@@ -16,7 +16,7 @@ mod args;
 mod statistics;
 
 use crate::args::{Args, Settings};
-use crate::statistics::{BenchmarkOutcome, summarise_outcomes};
+use crate::statistics::{summarise_outcomes, BenchmarkOutcome};
 
 #[derive(Deserialize)]
 struct QueryPlan {
@@ -144,9 +144,9 @@ async fn main() -> Result<()> {
     let args = Args::parse()?;
 
     let current_query = read_file_content(&args.current)?;
-    let up_query = read_file_content(&args.up)?;
+    let up_query = args.up.map(|p| read_file_content(&p)).transpose()?;
     let proposed_query = read_file_content(&args.proposed)?;
-    let down_query = read_file_content(&args.down)?;
+    let down_query = args.down.map(|p| read_file_content(&p)).transpose()?;
     let parameters = read_file_content(&args.parameters)?;
     let connection_details = read_file_content(&args.connection_details)?;
 
@@ -162,13 +162,17 @@ async fn main() -> Result<()> {
     let current = benchmark_query(&pool, &current_query, &parameters, args.settings).await?;
 
     println!("\n== Applying schema changes ==");
-    execute_as_owner(&pool, &up_query).await?;
+    if let Some(query) = up_query {
+        execute_as_owner(&pool, &query).await?;
+    }
 
     println!("\n== Proposed query ==");
     let proposed = benchmark_query(&pool, &proposed_query, &parameters, args.settings).await?;
 
     println!("\n== Rolling back schema changes ==");
-    execute_as_owner(&pool, &down_query).await?;
+    if let Some(query) = down_query {
+        execute_as_owner(&pool, &query).await?;
+    }
 
     // build results table
     let mut rows = Vec::new();
